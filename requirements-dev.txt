@@ -1,0 +1,3 @@
+# Direct test dependencies only. Install via requirements-dev.lock for
+# a reproducible environment (see README).
+pytest==8.4.2

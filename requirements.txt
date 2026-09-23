@@ -1,0 +1,7 @@
+discord.py==2.4.0
+mcstatus==11.1.1
+aiosqlite==0.20.0
+python-dotenv==1.2.2
+aiohttp==3.14.3
+# stdlib audioop was removed in Python 3.13; discord.py 2.4.0 still imports it.
+audioop-lts==0.2.1; python_version >= "3.13"

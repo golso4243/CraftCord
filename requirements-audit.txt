@@ -1,0 +1,3 @@
+# Audit tooling only — not installed for runtime or ordinary tests.
+# Install into a throwaway virtualenv: pip install -r requirements-audit.lock
+pip-audit==2.10.1

@@ -1,0 +1,72 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Databases and SQLite sidecars
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+
+# Logs and backups
+*.log
+*.log.*
+backups/
+host-export/
+exports/
+
+# Virtual environments
+.venv/
+.venv-*/
+venv/
+env/
+ENV/
+
+# Python caches and coverage
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.cache/
+
+# Local test Minecraft / disposable server material
+test-server/
+*.jar
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local secret-scan artifacts
+detect-secrets-report.json
+detect-secrets-paths.txt
+
+# Operator / internal documentation (not for the default public package)
+docs/
+
+# Editor / IDE / internal planning (not for distribution)
+.idea/
+.vscode/
+.cursor/
+*.swp
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
