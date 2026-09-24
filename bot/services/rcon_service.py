@@ -290,11 +290,20 @@ class RconService:
         responses (e.g. ``/list`` on a 1000-player server, or verbose
         plugin output) are split across multiple packets, *all* tagged
         with the original request id. There is no "last fragment" flag,
-        so we use the well-known trick of sending a second, bogus
-        command directly after the real one: Minecraft processes
-        commands serially, so we know every packet with the real id
-        has been delivered by the time we see a packet tagged with the
-        bogus id.
+        so after the real command we send a second, bogus command whose
+        id marks the end of the real response. Minecraft processes
+        commands serially, so every packet with the real id has been
+        delivered by the time a packet tagged with the bogus id arrives.
+
+        That sentinel must not share a TCP burst with the command.
+        Vanilla ``RconClient.run()`` does one socket read and closes the
+        connection unless that read is exactly one RCON packet
+        (``length == bytesRead - 4``; MC-87863). Pipelined packets are
+        coalesced, the server logs the RCON client thread shutting
+        down, and the lost response looks like uncertain delivery. The
+        first response whose id matches the command proves the server
+        has finished reading that packet, so only then do we write the
+        tail (type COMMAND, body irrelevant, id ``_TAIL_ID``).
 
         Connect/auth failures raise :class:`RconError` (safe to retry).
         Any failure after the command packet is written raises
@@ -308,19 +317,23 @@ class RconService:
         # have received the body even if we never see a response.
         try:
             await self._write_packet(cmd_id, _TYPE_COMMAND, command)
-            # Sentinel packet — body is irrelevant, only its id matters.
-            # We deliberately don't use ``_TYPE_RESPONSE`` (2 is COMMAND
-            # / 0 is RESPONSE) because some servers drop unexpected
-            # type bytes.
-            await self._write_packet(_TAIL_ID, _TYPE_COMMAND, "")
 
             fragments: list[bytes] = []
+            tail_sent = False
             while True:
                 resp_id, _resp_type, body = await self._read_packet()
                 if resp_id == _TAIL_ID:
                     break
                 if resp_id == cmd_id:
                     fragments.append(body)
+                    if not tail_sent:
+                        # Sentinel — body is irrelevant, only its id
+                        # matters. Type stays COMMAND; some servers drop
+                        # unexpected type bytes. Written only after this
+                        # first command-id response so vanilla's single
+                        # socket read sees one packet (MC-87863).
+                        await self._write_packet(_TAIL_ID, _TYPE_COMMAND, "")
+                        tail_sent = True
                 # Any other id is unexpected (shouldn't happen on a
                 # well-behaved server); we ignore it rather than raise so
                 # one stray packet can't kill the connection.

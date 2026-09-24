@@ -17,7 +17,13 @@ from typing import Awaitable, Callable, List, Optional
 
 import pytest
 
-from bot.services.rcon_service import RconError, RconService
+from bot.services.rcon_service import RconError, RconService, _TAIL_ID
+
+# Longer than Windows' ~200 ms Nagle / delayed-ACK hold, so a tail that
+# was written in the same burst as the command shows up in the read
+# buffer before we decide the client waited. Short enough that it still
+# fits inside the service's 1 s per-read timeout.
+_PIPELINE_SETTLE_S = 0.35
 
 # Server-to-client response packets use type 0 (RESPONSE) per the Valve
 # RCON spec. Mirrored here so the test file stands alone.
@@ -56,6 +62,48 @@ async def _auth_ok(
     request_id = await _read_login_packet(reader)
     writer.write(_make_packet(request_id, _TYPE_RESPONSE))
     await writer.drain()
+
+
+def _unread(reader: asyncio.StreamReader) -> bytes:
+    """Bytes already pulled off the socket but not consumed by the test.
+
+    A tail written in the same burst as the command lands here once the
+    command packet has been framed out.
+    """
+    return bytes(getattr(reader, "_buffer", b""))
+
+
+async def _pending_client_bytes(reader: asyncio.StreamReader) -> bytes:
+    """Return client bytes queued behind the packet we just consumed."""
+    await asyncio.sleep(_PIPELINE_SETTLE_S)
+    return _unread(reader)
+
+
+async def _respond_then_take_tail(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    *,
+    response: bytes,
+    received: List[bytes],
+) -> None:
+    """Answer one command, then read the tail that follows that answer.
+
+    The tail is a later write. Reading it out of the same burst as the
+    command deadlocks the client and reproduces the vanilla session
+    drop this suite guards against (MC-87863).
+    """
+    rid, type_, body = await _read_packet(reader)
+    assert type_ == _TYPE_COMMAND
+    assert body
+    received.append(body)
+    writer.write(_make_packet(rid, _TYPE_RESPONSE, response))
+    await writer.drain()
+
+    tail_id, tail_type, _tail_body = await _read_packet(reader)
+    assert tail_type == _TYPE_COMMAND
+    writer.write(_make_packet(tail_id, _TYPE_RESPONSE))
+    await writer.drain()
+    await asyncio.sleep(0.05)
 
 
 ClientHandler = Callable[
@@ -309,21 +357,10 @@ def test_list_replayed_once_when_replay_if_uncertain() -> None:
                     return
             return
 
-        # Second connection: answer list successfully.
-        while True:
-            rid, type_, body = await _read_packet(reader)
-            if type_ == _TYPE_COMMAND and body:
-                received.append(body)
-                writer.write(
-                    _make_packet(rid, _TYPE_RESPONSE, b"There are 0")
-                )
-                await writer.drain()
-            elif type_ == _TYPE_COMMAND and not body:
-                # Tail sentinel — echo its id so the client completes.
-                writer.write(_make_packet(rid, _TYPE_RESPONSE))
-                await writer.drain()
-                await asyncio.sleep(0.05)
-                return
+        # Second connection: answer list, then the tail that follows.
+        await _respond_then_take_tail(
+            reader, writer, response=b"There are 0", received=received
+        )
 
     async def body(svc: RconService) -> None:
         out = await svc.command("list", replay_if_uncertain=True)
@@ -352,17 +389,9 @@ def test_pre_send_failure_retries_once_then_sends() -> None:
             return
 
         await _auth_ok(reader, writer)
-        while True:
-            rid, type_, body = await _read_packet(reader)
-            if type_ == _TYPE_COMMAND and body:
-                received.append(body)
-                writer.write(_make_packet(rid, _TYPE_RESPONSE, b"ok"))
-                await writer.drain()
-            elif type_ == _TYPE_COMMAND and not body:
-                writer.write(_make_packet(rid, _TYPE_RESPONSE))
-                await writer.drain()
-                await asyncio.sleep(0.05)
-                return
+        await _respond_then_take_tail(
+            reader, writer, response=b"ok", received=received
+        )
 
     async def body(svc: RconService) -> None:
         # Mutating body, but failure was *before* send — one retry is ok.
@@ -373,3 +402,53 @@ def test_pre_send_failure_retries_once_then_sends() -> None:
         _run_multi_connection_server(handle, body, expected_connections=2)
     )
     assert received == [b"say once"]
+
+
+def test_tail_not_written_before_first_command_response() -> None:
+    """MC-87863: the tail must follow the first command-id response.
+
+    Vanilla does one socket read and drops the session unless that read
+    is exactly one RCON packet. A tail already buffered when the command
+    has been consumed — before any response is sent — fails this test.
+    Fragment bodies that share the command id are still concatenated,
+    and the tail is written once.
+    """
+    problems: List[str] = []
+    tails: List[tuple[int, int]] = []
+
+    async def handle(
+        idx: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        await _auth_ok(reader, writer)
+        rid, type_, body = await _read_packet(reader)
+        assert type_ == _TYPE_COMMAND
+        assert body == b"list"
+        if await _pending_client_bytes(reader):
+            problems.append(
+                "tail packet was written before the first command response"
+            )
+
+        writer.write(_make_packet(rid, _TYPE_RESPONSE, b"There are "))
+        writer.write(
+            _make_packet(rid, _TYPE_RESPONSE, b"0 of a max of 20")
+        )
+        await writer.drain()
+
+        tail_id, tail_type, _tail_body = await _read_packet(reader)
+        tails.append((tail_id, tail_type))
+        if await _pending_client_bytes(reader):
+            problems.append("tail packet was written more than once")
+
+        writer.write(_make_packet(tail_id, _TYPE_RESPONSE))
+        await writer.drain()
+        await asyncio.sleep(0.05)
+
+    async def body(svc: RconService) -> None:
+        out = await svc.command("list")
+        assert out == "There are 0 of a max of 20"
+
+    asyncio.run(
+        _run_multi_connection_server(handle, body, expected_connections=1)
+    )
+    assert problems == []
+    assert tails == [(_TAIL_ID, _TYPE_COMMAND)]
