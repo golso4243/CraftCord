@@ -183,6 +183,24 @@ class ConsoleCog(commands.Cog):
             async with self._lock:
                 self._console_buffer.append(line)
 
+    async def note_broadcast(self, message: str) -> None:
+        """Queue a broadcast line for the Discord console mirror.
+
+        In-game broadcasts are delivered with ``tellraw``, so the
+        Minecraft server log does not get a ``[Rcon]`` chat line.
+        When console mirroring is on, this records ``[Broadcast]`` plus
+        the text that was sent, as generic console output.
+        """
+        if not (
+            config.enable_console_mirror and config.console_channel_id is not None
+        ):
+            return
+        text = message.strip()
+        if not text:
+            return
+        async with self._lock:
+            self._console_buffer.append(f"[Broadcast] {text}")
+
     # ── chat & event senders ────────────────────────────────────
     # Minecraft-originated content is untrusted: players can type
     # @everyone, @here, <@userId>, or <@&roleId> in chat or death

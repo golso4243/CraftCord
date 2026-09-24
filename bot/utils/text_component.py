@@ -283,3 +283,77 @@ def build_tellraw_command(
         author, body, max_body_bytes=max_body_bytes
     )
     return _TELLRAW_PREFIX + build_discord_chat_snbt(author, fitted)
+
+
+def build_broadcast_snbt(body: str) -> str:
+    """Build the SNBT list for an in-game broadcast.
+
+    Shape (no hover, no click)::
+
+        [
+          {text:"[Broadcast] ",color:"gold"},
+          {text:"<body>",color:"white"}
+        ]
+
+    ``body`` is literal text. Vanilla ``say`` is not used: an RCON
+    ``say`` is rendered by Minecraft as ``[Rcon]``, which is the label
+    this payload replaces.
+    """
+    parts = [
+        snbt_text_component("[Broadcast] ", color="gold"),
+        snbt_text_component(body, color="white"),
+    ]
+    return "[" + ",".join(parts) + "]"
+
+
+def _broadcast_command_bytes(body: str) -> int:
+    return len((_TELLRAW_PREFIX + build_broadcast_snbt(body)).encode("utf-8"))
+
+
+def fit_broadcast_message(
+    body: str,
+    *,
+    max_body_bytes: int = RCON_MAX_BODY_BYTES,
+) -> str:
+    """Return ``body`` shortened so a broadcast ``tellraw`` command fits.
+
+    Shortens only the literal message on Unicode code-point boundaries.
+    Appends an ellipsis (``…``) when the message is shortened.
+
+    Raises:
+        ValueError: If even an empty message cannot fit inside
+            ``max_body_bytes``.
+    """
+    if _broadcast_command_bytes(body) <= max_body_bytes:
+        return body
+
+    lo, hi = 0, len(body)
+    best = ""
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = body[:mid] + ("…" if mid < len(body) else "")
+        if _broadcast_command_bytes(candidate) <= max_body_bytes:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+
+    if _broadcast_command_bytes(best) > max_body_bytes:
+        raise ValueError("tellraw command exceeds RCON body limit")
+    if best == "" and _broadcast_command_bytes("") > max_body_bytes:
+        raise ValueError("tellraw command exceeds RCON body limit")
+    return best
+
+
+def build_broadcast_tellraw_command(
+    body: str,
+    *,
+    max_body_bytes: int = RCON_MAX_BODY_BYTES,
+) -> str:
+    """Build ``tellraw @a <snbt>`` for a ``[Broadcast]`` message.
+
+    Raises:
+        ValueError: If the command cannot be made to fit.
+    """
+    fitted = fit_broadcast_message(body, max_body_bytes=max_body_bytes)
+    return _TELLRAW_PREFIX + build_broadcast_snbt(fitted)

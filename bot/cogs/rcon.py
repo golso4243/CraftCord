@@ -31,6 +31,12 @@ from bot.utils.minecraft import (
     sanitize_moderation_reason,
 )
 from bot.utils.permissions import require_member, require_mod
+from bot.utils.text_component import (
+    TellrawOutcome,
+    build_broadcast_tellraw_command,
+    classify_tellraw_response,
+    fit_broadcast_message,
+)
 
 log = logging.getLogger(__name__)
 
@@ -87,25 +93,76 @@ class RconCog(commands.Cog):
     @app_commands.describe(message="Message to broadcast")
     @require_mod()
     async def say(self, interaction: discord.Interaction, message: str) -> None:
-        """Broadcast ``message`` to all players via the vanilla ``say`` command.
+        """Broadcast ``message`` to all players as ``[Broadcast] message``.
 
-        The naive approach of interpolating the message directly into an
-        RCON string is unsafe because a double-quote can terminate the
-        argument. We replace ``"`` with ``'`` as a minimal, conservative
-        sanitizer — it preserves intent while preventing accidental command
-        injection.
+        Vanilla ``say`` is not used. Minecraft labels an RCON ``say`` as
+        ``[Rcon]`` in chat and in the server log. ``tellraw`` carries the
+        same bracket style as Discord chat (``[Discord]``), with the
+        message stored as literal SNBT text so quotes cannot change the
+        command.
         """
         await interaction.response.defer(ephemeral=True, thinking=True)
-        safe = message.replace('"', "'")
+        text = " ".join(message.replace("\r", " ").replace("\n", " ").split())
+        if not text:
+            await interaction.followup.send(
+                "Enter a message to broadcast.",
+                ephemeral=True,
+                allowed_mentions=_NO_MENTIONS,
+            )
+            return
         try:
-            await self.rcon.command(f'say {safe}')
+            fitted = fit_broadcast_message(text)
+            command = build_broadcast_tellraw_command(fitted)
+        except ValueError:
+            await interaction.followup.send(
+                "That broadcast is too long.",
+                ephemeral=True,
+                allowed_mentions=_NO_MENTIONS,
+            )
+            return
+        try:
+            response = await self.rcon.command(command)
         except RconError:
             await interaction.followup.send(
                 _RCON_USER_ERROR, ephemeral=True, allowed_mentions=_NO_MENTIONS
             )
             return
+
+        outcome = classify_tellraw_response(response)
+        if outcome is TellrawOutcome.COMMAND_REJECTED:
+            log.warning(
+                "Minecraft rejected broadcast tellraw: outcome=%s", outcome.name
+            )
+            await interaction.followup.send(
+                "Could not broadcast that message.",
+                ephemeral=True,
+                allowed_mentions=_NO_MENTIONS,
+            )
+            return
+        if outcome is TellrawOutcome.NO_PLAYERS:
+            log.info("Broadcast not delivered: no players online")
+            await interaction.followup.send(
+                "No players are online to receive that broadcast.",
+                ephemeral=True,
+                allowed_mentions=_NO_MENTIONS,
+            )
+            return
+        if outcome is TellrawOutcome.UNKNOWN_OUTPUT:
+            log.info(
+                "Unexpected non-empty broadcast tellraw response (len=%d); "
+                "not treating as rejection",
+                len(response or ""),
+            )
+
+        # Players see ``[Broadcast]`` via tellraw, which vanilla does not
+        # write to the server log. Record the text here so the process
+        # log still shows what was commanded.
+        log.info("Broadcast: %s", fitted)
+        console = self.bot.get_cog("ConsoleCog")
+        if console is not None:
+            await console.note_broadcast(fitted)
         await interaction.followup.send(
-            "Message sent.", ephemeral=True, allowed_mentions=_NO_MENTIONS
+            "Broadcast sent.", ephemeral=True, allowed_mentions=_NO_MENTIONS
         )
 
     @app_commands.command(name="kick", description="Kick a player. (mod)")

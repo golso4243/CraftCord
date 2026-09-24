@@ -14,6 +14,7 @@ from bot.cogs.console import ConsoleCog
 from bot.cogs.rcon import RconCog
 from bot.config import load_config
 from bot.utils.mc_log_parser import parse_line
+from bot.utils.text_component import extract_literal_texts
 
 
 CONFIGURED_GUILD = 111111111111111111
@@ -86,6 +87,99 @@ def test_whitelist_add_invokes_primary_rcon_once() -> None:
 
     rcon.command.assert_awaited_once_with("whitelist add Steve")
     interaction.followup.send.assert_awaited_once()
+
+
+def test_say_broadcasts_with_tellraw_not_vanilla_say() -> None:
+    rcon = MagicMock()
+    rcon.command = AsyncMock(return_value="")
+    bot = MagicMock()
+    bot.get_cog.return_value = None
+    cog = RconCog(bot, rcon)
+
+    guild = FakeGuild(CONFIGURED_GUILD)
+    member = FakeMember(guild)
+    interaction = FakeInteraction(guild, member)
+
+    asyncio.run(cog.say.callback(cog, interaction, 'Test "Broadcast"'))  # type: ignore[arg-type]
+
+    rcon.command.assert_awaited_once()
+    cmd = rcon.command.await_args.args[0]
+    assert cmd.startswith("tellraw @a ")
+    assert not cmd.startswith("say ")
+    texts = extract_literal_texts(cmd[len("tellraw @a ") :])
+    assert texts == [
+        ("[Broadcast] ", "gold"),
+        ('Test "Broadcast"', "white"),
+    ]
+    assert "Rcon" not in cmd
+    assert "RCON" not in cmd
+    interaction.followup.send.assert_awaited_once()
+    sent = interaction.followup.send.await_args.args[0]
+    assert sent == "Broadcast sent."
+    assert "RCON" not in sent
+    assert "Rcon" not in sent
+
+
+def test_say_rejection_does_not_claim_the_broadcast_was_sent() -> None:
+    rcon = MagicMock()
+    rcon.command = AsyncMock(return_value="Incorrect argument for command")
+    bot = MagicMock()
+    bot.get_cog.return_value = None
+    cog = RconCog(bot, rcon)
+
+    guild = FakeGuild(CONFIGURED_GUILD)
+    member = FakeMember(guild)
+    interaction = FakeInteraction(guild, member)
+
+    asyncio.run(cog.say.callback(cog, interaction, "Test Broadcast"))  # type: ignore[arg-type]
+
+    sent = interaction.followup.send.await_args.args[0]
+    assert sent == "Could not broadcast that message."
+    assert "RCON" not in sent
+
+
+def test_say_notes_broadcast_on_the_console_mirror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    cfg = replace(
+        console_module.config,
+        enable_console_mirror=True,
+        console_channel_id=4002,
+    )
+    monkeypatch.setattr(console_module, "config", cfg)
+    console = ConsoleCog(MagicMock())
+
+    rcon = MagicMock()
+    rcon.command = AsyncMock(return_value="")
+    bot = MagicMock()
+    bot.get_cog.return_value = console
+    cog = RconCog(bot, rcon)
+
+    guild = FakeGuild(CONFIGURED_GUILD)
+    member = FakeMember(guild)
+    interaction = FakeInteraction(guild, member)
+
+    asyncio.run(cog.say.callback(cog, interaction, "Test Broadcast"))  # type: ignore[arg-type]
+
+    assert console._console_buffer == ["[Broadcast] Test Broadcast"]
+
+
+def test_broadcast_note_is_skipped_when_console_mirror_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    cfg = replace(
+        console_module.config,
+        enable_console_mirror=False,
+        console_channel_id=4002,
+    )
+    monkeypatch.setattr(console_module, "config", cfg)
+    cog = ConsoleCog(MagicMock())
+    asyncio.run(cog.note_broadcast("Test Broadcast"))
+    assert cog._console_buffer == []
 
 
 def test_whitelist_remove_invokes_primary_rcon_once() -> None:

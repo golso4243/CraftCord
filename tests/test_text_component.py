@@ -11,10 +11,13 @@ import pytest
 from bot.utils.text_component import (
     RCON_MAX_BODY_BYTES,
     TellrawOutcome,
+    build_broadcast_snbt,
+    build_broadcast_tellraw_command,
     build_discord_chat_snbt,
     build_tellraw_command,
     classify_tellraw_response,
     extract_literal_texts,
+    fit_broadcast_message,
     fit_message_for_tellraw,
     snbt_quote,
     snbt_unescape,
@@ -171,6 +174,39 @@ def test_fit_raises_when_author_alone_overflows() -> None:
     author = "K" * 500
     with pytest.raises(ValueError, match="RCON body limit"):
         fit_message_for_tellraw(author, "hi", max_body_bytes=80)
+
+
+def test_broadcast_literals_match_discord_bracket_style() -> None:
+    snbt = build_broadcast_snbt("Test Broadcast")
+    assert extract_literal_texts(snbt) == [
+        ("[Broadcast] ", "gold"),
+        ("Test Broadcast", "white"),
+    ]
+    assert "hover" not in snbt.lower()
+    assert "click" not in snbt.lower()
+    assert "Rcon" not in snbt
+    assert "RCON" not in snbt
+
+
+def test_broadcast_quotes_stay_literal_text() -> None:
+    body = 'say "hi" and \\'
+    snbt = build_broadcast_snbt(body)
+    assert _texts(snbt)[1] == body
+    cmd = build_broadcast_tellraw_command(body)
+    assert cmd.startswith("tellraw @a ")
+    assert not cmd.startswith("say ")
+    assert _texts(cmd[len("tellraw @a ") :])[1] == body
+
+
+def test_broadcast_fit_shortens_on_code_point_boundary() -> None:
+    body = "😀" * 40
+    fitted = fit_broadcast_message(body, max_body_bytes=180)
+    fitted.encode("utf-8")
+    core = fitted[:-1] if fitted.endswith("…") else fitted
+    assert body.startswith(core)
+    cmd = build_broadcast_tellraw_command(fitted, max_body_bytes=180)
+    assert len(cmd.encode("utf-8")) <= 180
+    assert _texts(cmd[len("tellraw @a ") :])[0] == "[Broadcast] "
 
 
 def test_classify_empty_is_accepted_no_output() -> None:
