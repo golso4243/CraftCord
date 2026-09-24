@@ -4,7 +4,7 @@
 
 Self-hosted Discord bot for one Minecraft Java Edition server. Product domain: craftcordbot.com.
 
-CraftCord targets vanilla Minecraft Java Edition **26.2** with no required Minecraft mods or plugins. Offline serialization and parser tests exist; **live** compatibility with vanilla 26.2 and end-to-end Discord checks remain incomplete until an operator runs them against a disposable environment. Do not treat this tree as public-release-ready. This README is the operator documentation source of truth.
+CraftCord targets vanilla Minecraft Java Edition **26.2** with no required Minecraft mods or plugins. Offline serialization and parser tests exist, and the live checklist has been run against a disposable vanilla English 26.2 server (Temurin 25.0.1) and a Discord test guild using Python 3.13.7 on Windows with local log tailing — see [Live test results](#live-test-results). Pterodactyl log streaming has **not** been live-tested. No release has been published yet; treat this tree as a pre-release development checkout. This README is the operator documentation source of truth.
 
 Each instance connects **one** configured Discord guild to **one** Minecraft server.
 
@@ -147,7 +147,7 @@ Then restart the bot (or run `/sync` in the configured guild) so guild commands 
 
 ### 4. Install and run
 
-**Tested locally:** Python **3.13.7** on Windows 10.0.22631 (reported as Windows 11). Other Python minor versions and operating systems are **not** claimed as verified from this tree.
+**Tested locally and live:** Python **3.13.7** on Windows 10.0.22631 (reported as Windows 11), against vanilla Minecraft Java 26.2 on Temurin 25.0.1. Other Python minor versions and operating systems are **not** claimed as verified from this tree.
 
 Prefer the hashed lockfile so installs match the audited resolution. Installing dependencies does **not** start the bot.
 
@@ -256,7 +256,7 @@ Altered log formats from mods or plugins are outside the initial supported scope
 - **Moderation input validation** — `/kick`, `/ban`, `/pardon`, and whitelist commands validate Minecraft usernames (1–16 letters, numbers, or underscores) before calling RCON. `/kick` and `/ban` reason strings are trimmed, control characters collapsed, and capped at 200 characters.
 - **Pterodactyl auth failures** — invalid API credentials log one clear error and disable log mirroring until the bot is restarted or credentials are fixed. Transient network or panel errors still retry with exponential backoff.
 - **Message Content intent** — only requested when `CHAT_CHANNEL_ID` is configured. Without the chat bridge, slash commands and log mirroring work with default intents.
-- **Remaining verification** — live vanilla 26.2 acceptance of SNBT `tellraw`, log wording, SLP via `mcstatus==11.1.1`, and Discord end-to-end checks are **not** claimed from offline tests alone. Follow [Verification](#verification) below. License selection, private security reporting, remote CI, and publication remain separate owner decisions. Do not treat this tree as release-ready.
+- **Remaining verification** — live vanilla 26.2 acceptance of SNBT `tellraw`, local-log wording, SLP via `mcstatus==11.1.1`, and Discord end-to-end checks passed (see [Live test results](#live-test-results)). Still **not** live-verified: Pterodactyl log streaming, other Python versions and operating systems, and runtime foreign-guild denial. License selection, private security reporting, remote CI, and publication remain separate owner decisions. No release has been published yet.
 
 ## Verification
 
@@ -308,6 +308,25 @@ Confirm authorized-guild commands and chat relay, mention non-ping on forwarded 
 ### Optional Pterodactyl checks
 
 Only with a disposable panel instance (`LOG_SOURCE=pterodactyl`). Confirm the stream connects without logging tokens/payloads, auth failures stay sanitized, and routing matches local-tail classification.
+
+### Live test results
+
+Recorded by the operator against disposable credentials and a disposable environment:
+
+| Item | Value |
+| ---- | ----- |
+| Minecraft | Vanilla Java Edition 26.2, English |
+| Java | Temurin 25.0.1 |
+| Python | 3.13.7 on Windows 10.0.22631 |
+| Log source | `LOG_SOURCE=local` |
+
+| Check | Result |
+| ----- | ------ |
+| Live-test install checklist (install, startup log lines) | PASS |
+| Disposable Minecraft checks (local log) | PASS |
+| Discord → MC `tellraw` rendering confirmed by an online player | PASS |
+| Discord test-guild checks | PASS |
+| Optional Pterodactyl checks | NOT RUN |
 
 ### Recording results
 
