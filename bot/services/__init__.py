@@ -18,6 +18,9 @@ Minecraft server or its log files, giving the rest of the codebase
 * :mod:`bot.services.rcon_service` — sends RCON commands over TCP,
   with locking, reconnect for later requests, and no silent replay of
   mutating commands after uncertain delivery.
+* :mod:`bot.services.player_identity` — optional player-identity
+  delivery for Minecraft chat and player events via one CraftCord-owned
+  webhook per channel, with cached Minecraft head avatars.
 
 Each service is constructed once during bot startup (see ``bot.py``) and
 reused across cogs so that connections, threads and tailers aren't

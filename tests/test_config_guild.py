@@ -88,6 +88,40 @@ def test_invalid_bool_does_not_echo(monkeypatch: pytest.MonkeyPatch) -> None:
     assert secretish not in msg
 
 
+@pytest.mark.parametrize("name", ["CHAT_IDENTITY_MODE", "EVENTS_IDENTITY_MODE"])
+@pytest.mark.parametrize("raw,expected", [("bot", "bot"), ("player", "player"), ("PLAYER", "player"), (" Bot ", "bot"), ("", "bot")])
+def test_identity_modes_accepted(
+    monkeypatch: pytest.MonkeyPatch, name: str, raw: str, expected: str
+) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv(name, raw)
+    cfg = load_config()
+    assert getattr(cfg, name.lower()) == expected
+
+
+def test_identity_modes_are_independent(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("CHAT_IDENTITY_MODE", "player")
+    monkeypatch.delenv("EVENTS_IDENTITY_MODE", raising=False)
+    cfg = load_config()
+    assert cfg.chat_identity_mode == "player"
+    assert cfg.events_identity_mode == "bot"
+
+
+@pytest.mark.parametrize("name", ["CHAT_IDENTITY_MODE", "EVENTS_IDENTITY_MODE"])
+@pytest.mark.parametrize("raw", ["webhook", "players", "true", "secret-token-xyz"])
+def test_invalid_identity_mode_rejected_without_echo(
+    monkeypatch: pytest.MonkeyPatch, name: str, raw: str
+) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv(name, raw)
+    with pytest.raises(ConfigError) as exc_info:
+        load_config()
+    msg = str(exc_info.value)
+    assert name in msg
+    assert raw not in msg
+
+
 def test_invalid_integer_does_not_echo(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_env(monkeypatch)
     planted = "super-secret-token-value"

@@ -32,6 +32,7 @@ from discord.ext import commands
 from bot.config import config
 from bot.database.db import Database
 from bot.services.mcstatus_service import McStatusService
+from bot.services.player_identity import PlayerIdentityService
 from bot.services.rcon_service import RconError, RconService
 from bot.utils.permissions import require_configured_guild
 
@@ -103,6 +104,9 @@ class CraftCordBot(commands.Bot):
             config.rcon_host, config.rcon_port, config.rcon_password
         )
         self.mc: McStatusService = McStatusService(config.mc_host, config.mc_port)
+        # Lazy: no webhook or HTTP work happens unless an identity mode
+        # is ``player`` and a player chat/event is actually delivered.
+        self.player_identity: PlayerIdentityService = PlayerIdentityService(self)
 
         # Always sync to the required configured guild.
         self._guild_obj: discord.Object = discord.Object(id=config.guild_id)
@@ -208,6 +212,10 @@ class CraftCordBot(commands.Bot):
             await self.db.close()
         except Exception:
             log.exception("Error closing database")
+        try:
+            await self.player_identity.close()
+        except Exception:
+            log.exception("Error closing player identity service")
         await super().close()
 
     @staticmethod

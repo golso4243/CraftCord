@@ -15,6 +15,13 @@ and dispatches each line to the right destination:
   only when :data:`config.enable_console_mirror` is true, batched into
   code blocks.
 
+When ``CHAT_IDENTITY_MODE`` / ``EVENTS_IDENTITY_MODE`` is ``player``,
+chat and parsed player events are posted through
+:class:`~bot.services.player_identity.PlayerIdentityService` as
+``{player} • Minecraft`` with the player's head; a definite webhook
+failure falls back to the bot format in the same channel. Console
+output and everything outside this cog stay bot-authored.
+
 Every specialised channel is optional. When a specialised channel is
 missing, that category is **dropped** — it does not fall through to the
 console channel. Generic console mirroring is opt-in because raw logs
@@ -33,6 +40,7 @@ from discord.ext import commands
 
 from bot.config import config
 from bot.services.log_service import LogSource, build_log_source
+from bot.services.player_identity import DeliveryResult, PlayerIdentityService
 from bot.utils.destinations import resolve_guild_text_channel
 from bot.utils.formatting import (
     clean_mc_text,
@@ -53,6 +61,8 @@ log = logging.getLogger(__name__)
 # Discord's hard per-message cap is 2000 characters. We reserve ~100
 # chars of headroom for the surrounding code fence and a safety margin.
 _MAX_CHUNK = 1900
+# Discord's hard content limit for a single message body.
+_MAX_MESSAGE = 2000
 
 # How often the flush task drains the generic-console buffer. Small
 # enough that messages feel "live", large enough to batch bursty output.
@@ -211,6 +221,15 @@ class ConsoleCog(commands.Cog):
         channel = await self._resolve_chat_channel()
         if channel is None:
             return
+        if config.chat_identity_mode == "player":
+            body = chat.message
+            if len(body) > _MAX_MESSAGE:
+                body = body[: _MAX_MESSAGE - 1] + "…"
+            result = await self._send_as_player(
+                channel, chat.player, route="CHAT_CHANNEL_ID", content=body
+            )
+            if result is not DeliveryResult.FAILED:
+                return
         safe_name = escape_minecraft_username(chat.player)
         try:
             await channel.send(
@@ -229,10 +248,40 @@ class ConsoleCog(commands.Cog):
         embed = self._build_event_embed(event)
         if embed is None:
             return
+        player = getattr(event, "player", None)
+        if config.events_identity_mode == "player" and isinstance(player, str):
+            result = await self._send_as_player(
+                channel, player, route="EVENTS_CHANNEL_ID", embed=embed
+            )
+            if result is not DeliveryResult.FAILED:
+                return
         try:
             await channel.send(embed=embed, allowed_mentions=_NO_MENTIONS)
         except discord.DiscordException as e:
             log.warning("Failed to forward event: %s", type(e).__name__)
+
+    async def _send_as_player(
+        self,
+        channel: discord.TextChannel,
+        player: str,
+        *,
+        route: str,
+        content: Optional[str] = None,
+        embed: Optional[discord.Embed] = None,
+    ) -> DeliveryResult:
+        """Deliver via the player-identity webhook.
+
+        ``FAILED`` tells the caller to post the bot-format message in the
+        same channel; ``UNCONFIRMED`` must not be re-sent.
+        """
+        service: Optional[PlayerIdentityService] = getattr(
+            self.bot, "player_identity", None
+        )
+        if not isinstance(service, PlayerIdentityService):
+            return DeliveryResult.FAILED
+        return await service.send(
+            channel, player, route=route, content=content, embed=embed
+        )
 
     @staticmethod
     def _build_event_embed(event: object) -> Optional[discord.Embed]:

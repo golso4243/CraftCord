@@ -72,6 +72,7 @@ requirements-audit.lock          hashed audit tooling
    - Read Message History
    - Manage Messages (pin and edit the status embed)
    - Add Reactions (only used when a Discord → Minecraft chat message fails to send via RCON; not used for permission denials)
+   - Manage Webhooks — **only** if `CHAT_IDENTITY_MODE` or `EVENTS_IDENTITY_MODE` is `player`, and only needed in those channels. Not required with the default `bot` modes.
 4. In the Developer Portal, turn **Public Bot** off unless you have a deliberate multi-install product plan. This installation is single-guild by design; runtime checks refuse other guilds, but keeping the application private reduces accidental invites.
 5. **Privileged intents (Message Content)** — depends on whether you enable the chat bridge:
    - **`CHAT_CHANNEL_ID` unset:** default intents are enough. You do **not** need Message Content.
@@ -118,6 +119,8 @@ Get role and channel IDs by enabling **Developer Mode** in Discord (Settings →
 | `ENABLE_CONSOLE_MIRROR` | `true` / `false` (default `false`). Opt-in raw console mirroring |
 | `CHAT_CHANNEL_ID` | Bidirectional chat bridge channel (optional) |
 | `EVENTS_CHANNEL_ID` | Join/leave/death/advancement embeds (optional; no console fallback) |
+| `CHAT_IDENTITY_MODE` | `bot` (default) or `player`. Sender identity for Minecraft chat. See [Player identities](#player-identities-optional) |
+| `EVENTS_IDENTITY_MODE` | `bot` (default) or `player`. Sender identity for join/leave/death/advancement events |
 | `MC_HOST`, `MC_PORT` | Server list ping target (never shown on the status embed) |
 | `PUBLIC_ADDRESS` | Address shown in `/status` when set (e.g. `play.example.com`); omit field when blank |
 | `RCON_HOST`, `RCON_PORT`, `RCON_PASSWORD` | RCON connection for the configured Minecraft server |
@@ -224,7 +227,7 @@ Slash commands use role-based checks (`bot/utils/permissions.py`) **after** the 
 
 When `CHAT_CHANNEL_ID` is set, the bot runs a bidirectional chat bridge:
 
-- **Minecraft → Discord** — the console cog parses chat lines from the server log and posts them to the chat channel as `**[Minecraft]** **Player**: message`.
+- **Minecraft → Discord** — the console cog parses chat lines from the server log and posts them to the chat channel as `**[Minecraft]** **Player**: message` (or as `Player • Minecraft` with only the message text when `CHAT_IDENTITY_MODE=player`; see [Player identities](#player-identities-optional)).
 - **Discord → Minecraft** — the chat cog relays messages from the chat channel into the game via RCON `tellraw` with an SNBT list of `{text, color}` compounds (no hover). Names and message bodies are literal text. Oversized payloads are shortened on Unicode boundaries before serialization, or delivery fails with the warning reaction. Known English command-error responses and the exact phrase `No player was found` are treated as delivery failures; an empty RCON body means no error text was observed, not that a player saw the message.
 
 **Who can send Discord → Minecraft messages:** the configured-guild owner, anyone with Discord **Administrator** in that guild, or a member with the configured admin, mod, or member role. Users who can type in the channel but lack one of those roles are silently ignored (no reaction, no in-game message). Messages from other guilds, bots, and webhooks are ignored.
@@ -234,6 +237,51 @@ When `CHAT_CHANNEL_ID` is set, the bot runs a bidirectional chat bridge:
 **RCON failures:** if an authorized user's message fails to reach the game (RCON error), the bot adds a warning reaction to their Discord message. This requires the **Add Reactions** permission. The chat cog does not retry after a failed `command()` call or after a known command-error response. Separately, the RCON service reconnects for future requests; it does **not** silently replay mutating commands or `tellraw` when delivery is uncertain (response lost after the command may have reached Minecraft). Read-only `list` probes may opt into one uncertain-delivery replay. This is not exactly-once delivery.
 
 **Message Content intent:** required only when `CHAT_CHANNEL_ID` is set. See [Create the bot application](#1-create-the-bot-application).
+
+## Player identities (optional)
+
+By default, CraftCord posts Minecraft chat and events under its own name and avatar. Two independent settings can switch them to the player's identity:
+
+```env
+CHAT_IDENTITY_MODE=player
+EVENTS_IDENTITY_MODE=player
+```
+
+Each accepts only `bot` (default) or `player`; any other value stops startup with a configuration error. Unset or `bot` keeps the old behavior exactly, and CraftCord makes no webhook calls for that route.
+
+**What player mode changes:**
+
+| Message | Sender |
+| ------- | ------ |
+| Minecraft chat | The player |
+| Join / leave | The affected player |
+| Death | The player who died |
+| Advancement / challenge / goal | The player who earned it |
+| Slash-command replies (`/list`, `/status`, `/sync`, etc.) | CraftCord |
+| Pinned server status | CraftCord |
+| Console mirror, broadcasts, and other server output | CraftCord |
+
+The sender is shown as `PlayerName • Minecraft` with the player's skin head. The `• Minecraft` suffix sets these posts apart from messages typed in Discord. In chat, the body is only the message text (no `[Minecraft] Player:` prefix). Events keep their colored embeds, icons, and wording, so the player's name may also appear inside the embed. Player identity comes only from parsed vanilla chat and events. CraftCord never guesses a player from other server output. The bot account's own name and avatar are not changed.
+
+**How it works:** CraftCord creates (or reuses) one webhook named `CraftCord` in each channel whose mode is `player`, and overrides the sender name and avatar on each message. It only reuses a webhook that the bot account itself created. A webhook merely named `CraftCord` is never adopted. If chat and events share a channel, they share one webhook.
+
+**Permissions:** grant the bot **Manage Webhooks** in each channel used in player mode. Channel-level overrides are enough, so it does not need to be server-wide.
+
+**Fallback and troubleshooting:**
+
+- **Missing Manage Webhooks, or Discord rejects the webhook post:** the message is posted in the normal CraftCord format in the same channel, with the same player and content. A rate-limited warning names the setting (for example `CHAT_CHANNEL_ID: missing Manage Webhooks permission`). Setup is retried at most once a minute.
+- **Webhook deleted:** CraftCord recreates it once. If it is deleted again within a minute, messages use the CraftCord format until that minute passes, and then recreation is tried again. To stop recreation completely, set the mode back to `bot`.
+- **Timeout or Discord server error during a webhook post:** CraftCord does **not** retry or fall back, because the message may already be visible. In rare cases this can drop one message, but it will not post a duplicate. Delivery waits for Discord to confirm that it saved the message. discord.py handles rate limits.
+- Player names containing `discord` or `clyde` cannot be webhook senders (Discord rule). They use the CraftCord format.
+- Warnings never include webhook URLs, tokens, or chat text. All deliveries, including fallbacks, suppress mentions.
+
+**Avatars and privacy:** for each player name, CraftCord looks up the official profile with the Minecraft Services API (`GET https://api.minecraftservices.com/minecraft/profile/lookup/name/{username}`). Then it uses a [Crafatar](https://crafatar.com/) head URL, `https://crafatar.com/avatars/{uuid}?size=128&overlay`. Only the Minecraft username is sent to Minecraft Services, and only the resulting UUID appears in the Crafatar URL. Discord fetches the image; chat text is never sent to either service. Successful lookups are cached for 1 hour and misses for 10 minutes (256 names max). Lookups time out after 5 seconds.
+
+**Limitations:**
+
+- Crafatar checks for skin changes about every 20 minutes, and Discord may cache avatars too, so a new skin can take a while to show.
+- Offline-mode servers and custom or server-side skins cannot be matched reliably to official profiles. A name that happens to match a real account shows that account's head. An unknown name shows CraftCord's avatar.
+- If a lookup fails, CraftCord still sends the message, using its own avatar on that message so the previous player's head does not carry over.
 
 ## Log formats (vanilla English baseline)
 
@@ -256,7 +304,7 @@ Altered log formats from mods or plugins are outside the initial supported scope
 - **Moderation input validation** — `/kick`, `/ban`, `/pardon`, and whitelist commands validate Minecraft usernames (1–16 letters, numbers, or underscores) before calling RCON. `/kick` and `/ban` reason strings are trimmed, control characters collapsed, and capped at 200 characters.
 - **Pterodactyl auth failures** — invalid API credentials log one clear error and disable log mirroring until the bot is restarted or credentials are fixed. Transient network or panel errors still retry with exponential backoff.
 - **Message Content intent** — only requested when `CHAT_CHANNEL_ID` is configured. Without the chat bridge, slash commands and log mirroring work with default intents.
-- **Remaining verification** — live vanilla 26.2 acceptance of SNBT `tellraw`, local-log wording, SLP via `mcstatus==11.1.1`, and Discord end-to-end checks passed (see [Live test results](#live-test-results)). Still **not** live-verified: Pterodactyl log streaming, other Python versions and operating systems, and runtime foreign-guild denial. License selection, private security reporting, remote CI, and publication remain separate owner decisions. No release has been published yet.
+- **Remaining verification** — live vanilla 26.2 acceptance of SNBT `tellraw`, local-log wording, SLP via `mcstatus==11.1.1`, and Discord end-to-end checks passed (see [Live test results](#live-test-results)). Still **not** live-verified: player-identity webhooks (`CHAT_IDENTITY_MODE` / `EVENTS_IDENTITY_MODE=player`), Pterodactyl log streaming, other Python versions and operating systems, and runtime foreign-guild denial. License selection, private security reporting, remote CI, and publication remain separate owner decisions. No release has been published yet.
 
 ## Verification
 
@@ -272,7 +320,7 @@ Do **not** paste credentials into tickets, chats, or issues. Configure them only
 
 ### Offline automated tests
 
-Covered under [Running tests](#5-running-tests-optional). Expected coverage includes guild isolation, destination validation, mention suppression, console opt-in, sanitized errors, SNBT tellraw serialization, tellraw response classification, RCON uncertain-delivery (mutating commands not replayed; `list` may opt into one replay), synthetic vanilla log fixtures, and status/uptime hysteresis. No live Discord, Minecraft, or panel connections.
+Covered under [Running tests](#5-running-tests-optional). Expected coverage includes guild isolation, destination validation, mention suppression, console opt-in, sanitized errors, SNBT tellraw serialization, tellraw response classification, RCON uncertain-delivery (mutating commands not replayed; `list` may opt into one replay), synthetic vanilla log fixtures, status/uptime hysteresis, and player-identity webhook delivery (reuse, ownership, fallback, bounded recovery, avatar caching). No live Discord, Minecraft, or panel connections.
 
 ### Live-test install checklist
 
@@ -304,6 +352,17 @@ Use a non-production Discord application and dedicated test guild (Public Bot of
 Guild-only sync means slash commands may be **absent** in a second guild. That absence is registration, not a live test of runtime foreign-guild denial. Do **not** globally register production commands to provoke denial. Cross-guild runtime enforcement is offline-tested; live verification stays pending.
 
 Confirm authorized-guild commands and chat relay, mention non-ping on forwarded text, sanitized failure messages, and that `ENABLE_CONSOLE_MIRROR=false` keeps generic console silent.
+
+#### Player identity checks (optional)
+
+With `CHAT_IDENTITY_MODE=player`, `EVENTS_IDENTITY_MODE=player`, and Manage Webhooks granted in the chat and events channels:
+
+1. Two different players each send a chat message. Each appears as `Name • Minecraft` with their own head, the body is the text only, and the second message does not reuse the first player's head.
+2. One player joins, leaves, dies, and earns an advancement. Each event embed appears under that player's name and head.
+3. Run `/list` or `/status`. The reply comes from CraftCord, as does the pinned status embed.
+4. Server Settings → Integrations → Webhooks lists one `CraftCord` webhook per channel (one total if chat and events share a channel).
+5. Remove Manage Webhooks and send chat. The message appears in the old `[Minecraft]` format and the bot logs a warning.
+6. A player types `@everyone` in chat. It shows but does not ping, and webhook posts are not relayed back into Minecraft.
 
 ### Optional Pterodactyl checks
 

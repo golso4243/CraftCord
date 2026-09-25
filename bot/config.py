@@ -113,6 +113,27 @@ def _bool(name: str, default: bool = False) -> bool:
     raise ConfigError(f"{name} must be a boolean (true/false)") from None
 
 
+def _choice(name: str, choices: tuple[str, ...], default: str) -> str:
+    """Read a case-insensitive enumerated variable.
+
+    Blank / unset returns ``default``. Any other value outside
+    ``choices`` raises :class:`ConfigError` without echoing the raw value.
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    lowered = raw.lower()
+    if lowered in choices:
+        return lowered
+    raise ConfigError(f"{name} must be one of: {', '.join(choices)}") from None
+
+
+# Sender identity for Minecraft chat / player events. ``bot`` keeps the
+# CraftCord account; ``player`` posts through a CraftCord-owned webhook
+# with the player's name and head.
+IDENTITY_MODES = ("bot", "player")
+
+
 @dataclass(frozen=True)
 class Config:
     """Immutable snapshot of all configuration values.
@@ -148,6 +169,10 @@ class Config:
     # unset, those events are dropped (they do not fall through to
     # the console channel).
     events_channel_id: Optional[int]
+    # ``bot`` (default) or ``player``. Selected independently; see
+    # bot.services.player_identity for the webhook delivery path.
+    chat_identity_mode: str
+    events_identity_mode: str
 
     # ── Minecraft (SLP / public ping) ─────────────────────────────
     mc_host: str
@@ -218,6 +243,8 @@ def load_config() -> Config:
         console_channel_id=_int("CONSOLE_CHANNEL_ID", positive=True),
         chat_channel_id=_int("CHAT_CHANNEL_ID", positive=True),
         events_channel_id=_int("EVENTS_CHANNEL_ID", positive=True),
+        chat_identity_mode=_choice("CHAT_IDENTITY_MODE", IDENTITY_MODES, "bot"),
+        events_identity_mode=_choice("EVENTS_IDENTITY_MODE", IDENTITY_MODES, "bot"),
         mc_host=_opt("MC_HOST", "127.0.0.1"),
         # `_int(..., default) or default` collapses a None return (which
         # can't happen here given the default, but keeps the type
