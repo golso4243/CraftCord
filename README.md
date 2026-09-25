@@ -275,11 +275,12 @@ The sender is shown as `PlayerName • Minecraft` with the player's skin head. T
 - Player names containing `discord` or `clyde` cannot be webhook senders (Discord rule). They use the CraftCord format.
 - Warnings never include webhook URLs, tokens, or chat text. All deliveries, including fallbacks, suppress mentions.
 
-**Avatars and privacy:** for each player name, CraftCord looks up the official profile with the Minecraft Services API (`GET https://api.minecraftservices.com/minecraft/profile/lookup/name/{username}`). Then it uses a [Crafatar](https://crafatar.com/) head URL, `https://crafatar.com/avatars/{uuid}?size=128&overlay`. Only the Minecraft username is sent to Minecraft Services, and only the resulting UUID appears in the Crafatar URL. Discord fetches the image; chat text is never sent to either service. Successful lookups are cached for 1 hour and misses for 10 minutes (256 names max). Lookups time out after 5 seconds.
+**Avatars and privacy:** for each player name, CraftCord looks up the official profile with the Minecraft Services API (`GET https://api.minecraftservices.com/minecraft/profile/lookup/name/{username}`). Then it uses a [Minotar](https://minotar.net/) head URL (face plus hat layer), `https://minotar.net/helm/{uuid}/128.png`. Only the Minecraft username is sent to Minecraft Services, and only the resulting UUID appears in the Minotar URL. Crafatar is not used because it blocks Discord's image proxy ([crafatar#322](https://github.com/crafatar/crafatar/issues/322)), which makes Discord show its default avatar. Discord fetches the image; chat text is never sent to either service. Successful lookups are cached for 1 hour and misses for 10 minutes (256 names max). Lookups time out after 5 seconds.
 
 **Limitations:**
 
-- Crafatar checks for skin changes about every 20 minutes, and Discord may cache avatars too, so a new skin can take a while to show.
+- Minotar serves head images with a cache lifetime of up to 6 hours, and Discord may cache avatars too, so a new skin can take a while to show.
+- If the sender shows Discord's default logo instead of a head, check that `https://minotar.net/helm/<uuid>/128.png` loads in a browser. A bot without its own avatar also shows as the Discord logo when the profile lookup fails.
 - Offline-mode servers and custom or server-side skins cannot be matched reliably to official profiles. A name that happens to match a real account shows that account's head. An unknown name shows CraftCord's avatar.
 - If a lookup fails, CraftCord still sends the message, using its own avatar on that message so the previous player's head does not carry over.
 

@@ -24,9 +24,9 @@ Delivery outcomes
 Avatars
 -------
 :class:`MinecraftHeadResolver` maps a validated username to a UUID via
-the Minecraft Services profile lookup and builds a Crafatar head URL.
+the Minecraft Services profile lookup and builds a Minotar head URL.
 Only the username goes to Minecraft Services and only the UUID appears
-in the Crafatar URL (Discord, not CraftCord, fetches the image). Offline
+in the Minotar URL (Discord, not CraftCord, fetches the image). Offline
 -mode or server-side skins cannot be matched to official profiles; any
 lookup failure yields an explicit fallback avatar so a previous
 player's head never carries over.
@@ -70,13 +70,13 @@ _UUID_RE = re.compile(r"^[0-9a-f]{32}$")
 PROFILE_LOOKUP_URL = (
     "https://api.minecraftservices.com/minecraft/profile/lookup/name/{name}"
 )
-HEAD_URL = "https://crafatar.com/avatars/{uuid}?size=128&overlay"
-# MHF_Steve's profile UUID with Crafatar's documented ``default`` param;
-# only used when the bot user's own avatar is unavailable.
-_LAST_RESORT_AVATAR = (
-    "https://crafatar.com/avatars/c06f89064c8a49119c29ea1dbd1aab82"
-    "?size=128&overlay&default=MHF_Steve"
-)
+# Minotar "Avatar With Helm" (face plus hat layer). Crafatar is not
+# usable: it blocks Discord's image proxy (crafatar/crafatar#322), so
+# Discord shows its default avatar instead of the head.
+HEAD_URL = "https://minotar.net/helm/{uuid}/128.png"
+# MHF_Steve's profile UUID; only used when the bot user's own avatar is
+# unavailable.
+_LAST_RESORT_AVATAR = HEAD_URL.format(uuid="c06f89064c8a49119c29ea1dbd1aab82")
 
 # Minimum spacing between setup attempts / webhook recreation for a
 # channel, and between repeated warnings of the same kind.
@@ -115,7 +115,7 @@ class _RateLimitedWarner:
 
 
 class MinecraftHeadResolver:
-    """Resolve Minecraft usernames to Crafatar head URLs with caching."""
+    """Resolve Minecraft usernames to Minotar head URLs with caching."""
 
     def __init__(
         self,

@@ -602,7 +602,7 @@ def test_successful_lookup_is_cached() -> None:
     )
     url1 = run(resolver.head_url("Steve"))
     url2 = run(resolver.head_url("steve"))
-    assert url1 == url2 == f"https://crafatar.com/avatars/{STEVE_UUID}?size=128&overlay"
+    assert url1 == url2 == f"https://minotar.net/helm/{STEVE_UUID}/128.png"
     assert session.urls == [
         "https://api.minecraftservices.com/minecraft/profile/lookup/name/Steve"
     ]
